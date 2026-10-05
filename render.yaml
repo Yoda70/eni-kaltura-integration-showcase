@@ -1,0 +1,10 @@
+﻿services:
+  - type: web
+    name: eni-kaltura-integration-showcase
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: PAGECRYPT_PASSWORD
+        sync: false

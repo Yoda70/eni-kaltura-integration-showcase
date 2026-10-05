@@ -1,0 +1,11 @@
+﻿node_modules/
+dist/
+.env
+.env.*
+*.log
+*.secret
+*.key
+*.pem
+prod142_*.json
+prod142_*.csv
+kaltura_*_output/
