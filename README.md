@@ -1,38 +1,15 @@
-﻿# Metadata Extraction Factory
+# Metadata Extraction Factory SPA v2 Demo
 
-Demo protetta dedicata all'estrazione e normalizzazione dei contenuti multimediali Kaltura per ENI.
+Single-page technical showcase for ENI Kaltura integration.
 
-## Modelli
+## Included
+- Overview and catalog KPIs
+- Entry catalog and full SRT detail
+- Yellow channel view
+- Verify and Extract demonstrations
+- UAT view
+- Error catalog
+- Integration guide
 
-- Metadata Model
-- Indexing Model
-- Analytics Model
-- Catalog Caption Coverage
-- Verify API
-- Extract API
-
-## Sicurezza
-
-Il sito demo Ã¨ cifrato con PageCrypt durante la build Render. La password non deve essere salvata nella repository.
-## Modelli
-
-- Metadata Model
-- Indexing Model
-- Analytics Model
-- Catalog Caption Coverage
-- Verify API
-- Extract API
-
-## Avvertenza
-
-Il repository deve contenere esclusivamente dati sintetici o
-esplicitamente autorizzati alla pubblicazione.
-
-Non devono essere caricati:
-
-- Admin Secret
-- AppToken Secret
-- Kaltura Session
-- token applicativi
-- output production riservati
-- trascrizioni integrali non autorizzate
+## Important
+The bundled textual data is synthetic. Replace it only with authorized catalog exports. The source is encrypted during the Render build by PageCrypt. Keep the repository private.

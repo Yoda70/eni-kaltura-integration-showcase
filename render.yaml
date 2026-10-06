@@ -1,4 +1,4 @@
-﻿services:
+services:
   - type: web
     name: metadata-extraction-factory
     runtime: static
@@ -8,4 +8,3 @@
     envVars:
       - key: PAGECRYPT_PASSWORD
         sync: false
-

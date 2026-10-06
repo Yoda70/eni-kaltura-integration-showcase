@@ -1,13 +1,12 @@
-﻿{
-    "name":  "metadata-extraction-factory",
-    "version":  "1.0.0",
-    "private":  true,
-    "type":  "module",
-    "scripts":  {
-                    "build":  "node scripts/encrypt.mjs"
-                },
-    "devDependencies":  {
-                            "pagecrypt":  "^6.1.1"
-                        },
-    "description":  "Metadata Extraction Factory demo portal"
+{
+  "name": "metadata-extraction-factory",
+  "version": "2.0.0-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/encrypt.mjs"
+  },
+  "devDependencies": {
+    "pagecrypt": "^6.1.1"
+  }
 }
