@@ -1,8 +1,19 @@
-# ENI Kaltura Integration Showcase
+﻿# Metadata Extraction Factory
 
-Portale dimostrativo dedicato all'integrazione tra Kaltura,
-Power Automate, GenAI e Yellow AI.
+Demo protetta dedicata all'estrazione e normalizzazione dei contenuti multimediali Kaltura per ENI.
 
+## Modelli
+
+- Metadata Model
+- Indexing Model
+- Analytics Model
+- Catalog Caption Coverage
+- Verify API
+- Extract API
+
+## Sicurezza
+
+Il sito demo Ã¨ cifrato con PageCrypt durante la build Render. La password non deve essere salvata nella repository.
 ## Modelli
 
 - Metadata Model
