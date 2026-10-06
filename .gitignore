@@ -11,3 +11,5 @@ prod142_*.csv
 kaltura_*_output/
 
 backup-rebrand-*/
+*.bak-live
+*.bak-live*

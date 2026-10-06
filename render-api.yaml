@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: metadata-extraction-factory-api-preview
+    runtime: node
+    rootDir: api
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeployTrigger: commit
+    envVars:
+      - key: KALTURA_SERVICE_URL
+        value: https://www.kaltura.com/api_v3
+      - key: KALTURA_PARTNER_ID
+        sync: false
+      - key: KALTURA_ADMIN_SECRET
+        sync: false
+      - key: KALTURA_TEST_CATEGORY_NAME
+        value: TEST_METADATA_EXTRACTION
+      - key: SPA_ALLOWED_ORIGIN
+        sync: false
