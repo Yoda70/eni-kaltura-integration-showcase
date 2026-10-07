@@ -1,12 +1,17 @@
-# Metadata Extraction Factory API Preview
+# Metadata Extraction Factory API
 
-Read-only backend restricted to the KMC category `TEST_METADATA_EXTRACTION`.
+Shared application core exposed through REST and MCP.
 
-Required environment variables:
-- KALTURA_SERVICE_URL
-- KALTURA_PARTNER_ID
-- KALTURA_ADMIN_SECRET
-- KALTURA_TEST_CATEGORY_NAME
-- SPA_ALLOWED_ORIGIN
+## REST
+- `GET /api/v1/health`
+- `POST /api/v1/kaltura/transcripts/verify`
+- `POST /api/v1/kaltura/transcripts/extract`
+- `POST /api/v1/kaltura/transcripts/extract-preferred`
 
-For production, replace the admin-secret session adapter with a least-privilege AppToken.
+## MCP
+- `POST /mcp`
+- `tools/list`
+- `tools/call`
+
+## Required environment variables
+`KALTURA_SERVICE_URL`, `KALTURA_PARTNER_ID`, `KALTURA_ADMIN_SECRET`, `SPA_ALLOWED_ORIGIN`.
