@@ -13,3 +13,4 @@ kaltura_*_output/
 backup-rebrand-*/
 *.bak-live
 *.bak-live*
+local-backups/

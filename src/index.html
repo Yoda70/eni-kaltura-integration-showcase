@@ -1,5 +1,354 @@
 ﻿<!doctype html>
-<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Metadata Extraction Factory</title><meta name="application-name" content="Metadata Extraction Factory"><meta name="robots" content="noindex,nofollow">
+<html lang="it"><head>
+<script id="metadata-extraction-factory-caption-mapping-v1">
+/* Metadata Extraction Factory - canonical caption normalization and aggregation */
+(() => {
+  "use strict";
+
+  const CAPTION_STATUS_BY_CODE = Object.freeze({
+    "-1": "ERROR",
+    "0": "QUEUED",
+    "2": "READY",
+    "3": "DELETED",
+    "7": "IMPORTING",
+    "9": "EXPORTING"
+  });
+
+  const CAPTION_CODE_BY_NAME = Object.freeze({
+    ERROR: -1,
+    QUEUED: 0,
+    READY: 2,
+    DELETED: 3,
+    IMPORTING: 7,
+    EXPORTING: 9
+  });
+
+  const CAPTION_FORMAT_BY_CODE = Object.freeze({
+    "1": "SRT",
+    "2": "DFXP_TTML",
+    "3": "WEBVTT",
+    "4": "CAP",
+    "5": "SCC"
+  });
+
+  const CAPTION_FORMAT_CODE_BY_NAME = Object.freeze({
+    SRT: 1,
+    DFXP: 2,
+    DFXP_TTML: 2,
+    TTML: 2,
+    WEBVTT: 3,
+    VTT: 3,
+    CAP: 4,
+    SCC: 5
+  });
+
+  const LANGUAGE_CODE_MAP = Object.freeze({
+    italian: "it",
+    italiano: "it",
+    it: "it",
+    english: "en",
+    inglese: "en",
+    en: "en",
+    french: "fr",
+    francese: "fr",
+    fr: "fr",
+    spanish: "es",
+    spagnolo: "es",
+    es: "es",
+    german: "de",
+    tedesco: "de",
+    de: "de",
+    portuguese: "pt",
+    portoghese: "pt",
+    pt: "pt"
+  });
+
+  function asNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function normalizeCaptionStatus(rawCode, rawName, rawReady) {
+    let statusCode = asNumber(rawCode);
+    let statusName = String(rawName ?? "").trim().toUpperCase();
+
+    // Some API/view models place the numeric code in status.
+    if (statusCode === null) {
+      const numericStatus = asNumber(rawName);
+      if (numericStatus !== null) statusCode = numericStatus;
+    }
+
+    if (statusCode !== null) {
+      statusName = CAPTION_STATUS_BY_CODE[String(statusCode)] ?? `UNKNOWN_${statusCode}`;
+    }
+    else if (Object.prototype.hasOwnProperty.call(CAPTION_CODE_BY_NAME, statusName)) {
+      statusCode = CAPTION_CODE_BY_NAME[statusName];
+    }
+    else if (!statusName) {
+      statusName = "UNKNOWN_NULL";
+    }
+    else if (!statusName.startsWith("UNKNOWN_")) {
+      statusName = `UNKNOWN_${statusName}`;
+    }
+
+    // Canonical rule: Kaltura code 2 is the only READY state.
+    // A textual READY is accepted when raw code is unavailable.
+    const ready = statusCode === 2 || (statusCode === null && String(rawName ?? "").trim().toUpperCase() === "READY") || rawReady === true && statusName === "READY";
+
+    return {
+      rawStatusCode: statusCode,
+      status: statusName,
+      ready
+    };
+  }
+
+  function normalizeCaptionFormat(rawCode, rawName) {
+    let formatCode = asNumber(rawCode);
+    let formatName = String(rawName ?? "").trim().toUpperCase();
+
+    if (formatCode === null) {
+      const numericFormat = asNumber(rawName);
+      if (numericFormat !== null) formatCode = numericFormat;
+    }
+
+    if (formatCode !== null) {
+      formatName = CAPTION_FORMAT_BY_CODE[String(formatCode)] ?? `UNKNOWN_${formatCode}`;
+    }
+    else if (Object.prototype.hasOwnProperty.call(CAPTION_FORMAT_CODE_BY_NAME, formatName)) {
+      formatCode = CAPTION_FORMAT_CODE_BY_NAME[formatName];
+      formatName = CAPTION_FORMAT_BY_CODE[String(formatCode)];
+    }
+    else if (!formatName) {
+      formatName = "UNKNOWN_NULL";
+    }
+    else if (!formatName.startsWith("UNKNOWN_")) {
+      formatName = `UNKNOWN_${formatName}`;
+    }
+
+    return {
+      formatCode,
+      format: formatName,
+      eligibleFormat: formatCode === 1 || formatName === "SRT"
+    };
+  }
+
+  function normalizeLanguageCode(rawLanguageCode, rawLanguageName, label) {
+    for (const candidate of [rawLanguageCode, rawLanguageName, label]) {
+      if (candidate === null || candidate === undefined) continue;
+      const key = String(candidate).trim().toLowerCase().replaceAll("-", "_");
+      if (LANGUAGE_CODE_MAP[key]) return LANGUAGE_CODE_MAP[key];
+      if (/^[a-z]{2}$/.test(key)) return key;
+      if (/^[a-z]{2}_[a-z]{2}$/.test(key)) return key.replace("_", "-");
+    }
+    return "und";
+  }
+
+  function normalizeTranscript(rawAsset) {
+    const asset = rawAsset && typeof rawAsset === "object" ? rawAsset : {};
+
+    const statusInfo = normalizeCaptionStatus(
+      asset.rawStatusCode ?? asset.statusCode,
+      asset.statusName ?? asset.status,
+      asset.ready
+    );
+
+    const formatInfo = normalizeCaptionFormat(
+      asset.formatCode,
+      asset.formatName ?? asset.format
+    );
+
+    const languageCode = normalizeLanguageCode(
+      asset.languageCode,
+      asset.languageName ?? asset.language,
+      asset.label
+    );
+
+    const extractable = statusInfo.ready === true && Boolean(asset.captionAssetId ?? asset.assetId ?? asset.id);
+    const eligibleAsset = statusInfo.ready === true && formatInfo.eligibleFormat === true && languageCode !== "und";
+    const exclusionReasons = [];
+
+    if (!statusInfo.ready) exclusionReasons.push(`CAPTION_STATUS_${statusInfo.status}`);
+    if (!formatInfo.eligibleFormat) exclusionReasons.push(`FORMAT_NOT_ELIGIBLE_${formatInfo.format}`);
+    if (languageCode === "und") exclusionReasons.push("LANGUAGE_NOT_RECOGNIZED");
+
+    return {
+      ...asset,
+      captionAssetId: asset.captionAssetId ?? asset.assetId ?? asset.id ?? null,
+      languageCode,
+      languageName: asset.languageName ?? asset.language ?? asset.label ?? "",
+      label: asset.label ?? "",
+      formatCode: formatInfo.formatCode,
+      format: formatInfo.format,
+      rawStatusCode: statusInfo.rawStatusCode,
+      status: statusInfo.status,
+      ready: statusInfo.ready,
+      extractable,
+      eligibleFormat: formatInfo.eligibleFormat,
+      eligibleAsset,
+      isDefault: asset.isDefault === true || Number(asset.isDefault) === 1,
+      accuracy: asset.accuracy ?? null,
+      version: asset.version ?? null,
+      updatedAt: asset.updatedAt ?? null,
+      exclusionReasons
+    };
+  }
+
+  function normalizeRequestedLanguages(value) {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.map(item => normalizeLanguageCode(item, item, item)).filter(item => item !== "und"))];
+  }
+
+  function aggregateEntry(entry, inheritedRequestedLanguages = []) {
+    if (!entry || typeof entry !== "object") return entry;
+
+    const rawTranscripts = Array.isArray(entry.transcripts)
+      ? entry.transcripts
+      : Array.isArray(entry.captionAssets)
+        ? entry.captionAssets
+        : [];
+
+    const transcripts = rawTranscripts.map(normalizeTranscript);
+    const requestedLanguages = normalizeRequestedLanguages(
+      entry.requestedLanguages ?? inheritedRequestedLanguages
+    );
+
+    const readyAssets = transcripts.filter(asset => asset.ready === true);
+    const readySrtAssets = readyAssets.filter(asset => asset.eligibleFormat === true);
+    const eligibleAssets = readySrtAssets.filter(asset => asset.eligibleAsset === true);
+    const availableLanguages = [...new Set(readySrtAssets.map(asset => asset.languageCode).filter(code => code && code !== "und"))];
+    const missingLanguages = requestedLanguages.filter(code => !availableLanguages.includes(code));
+
+    let status;
+    if (entry.entryAvailable === false) status = "ENTRY_NOT_FOUND";
+    else if (transcripts.length === 0) status = "ENTRY_FOUND_NO_CAPTIONS";
+    else if (readyAssets.length === 0) status = "ONLY_NON_READY_CAPTIONS";
+    else if (readySrtAssets.length === 0) status = "READY_CAPTIONS_NO_SRT";
+    else if (requestedLanguages.length > 0 && missingLanguages.length > 0) status = "PARTIAL_READY_FOR_INDEXING";
+    else status = "READY_FOR_INDEXING";
+
+    const technicallyEligible = eligibleAssets.length > 0;
+    const eligibilityReasons = [];
+    const exclusionReasons = [];
+
+    if (entry.entryAvailable !== false) eligibilityReasons.push("ENTRY_AVAILABLE");
+    if (readyAssets.length > 0) eligibilityReasons.push("READY_CAPTION_AVAILABLE");
+    if (readySrtAssets.length > 0) eligibilityReasons.push("READY_SRT_AVAILABLE");
+    if (availableLanguages.length > 0) eligibilityReasons.push("LANGUAGE_RECOGNIZED");
+
+    if (transcripts.length === 0) exclusionReasons.push("NO_CAPTION_ASSETS");
+    else if (readyAssets.length === 0) exclusionReasons.push("NO_READY_CAPTION_ASSETS");
+    else if (readySrtAssets.length === 0) exclusionReasons.push("NO_READY_SRT_ASSETS");
+
+    for (const language of missingLanguages) {
+      exclusionReasons.push(`MISSING_REQUIRED_LANGUAGE_${language.toUpperCase()}`);
+    }
+
+    // Current demo rule: at least one recognized READY SRT is technically eligible.
+    // If ENI later requires all requested languages, change this to:
+    // technicallyEligible && missingLanguages.length === 0
+    const eligibleForChatbot = technicallyEligible;
+
+    return {
+      ...entry,
+      status,
+      eligibleForChatbot,
+      technicallyEligible,
+      requestedLanguages,
+      availableLanguages,
+      missingLanguages,
+      captionSummary: {
+        totalCaptionAssets: transcripts.length,
+        readyCaptionAssets: readyAssets.length,
+        nonReadyCaptionAssets: transcripts.length - readyAssets.length,
+        readySrtAssets: readySrtAssets.length,
+        eligibleCaptionAssets: eligibleAssets.length,
+        readyLanguageCount: availableLanguages.length
+      },
+      transcripts,
+      eligibilityReasons,
+      exclusionReasons
+    };
+  }
+
+  function normalizePayload(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+
+    const copy = Array.isArray(payload) ? [...payload] : { ...payload };
+    const inheritedRequestedLanguages = copy.requestedLanguages ?? copy.data?.requestedLanguages ?? [];
+
+    if (copy.status === "VERIFY_RESULT" && copy.data && typeof copy.data === "object") {
+      copy.data = aggregateEntry(copy.data, inheritedRequestedLanguages);
+      return copy;
+    }
+
+    if (copy.data && typeof copy.data === "object") {
+      copy.data = { ...copy.data };
+
+      for (const key of ["entries", "items", "objects", "results"]) {
+        if (Array.isArray(copy.data[key])) {
+          copy.data[key] = copy.data[key].map(entry => aggregateEntry(entry, inheritedRequestedLanguages));
+        }
+      }
+
+      if (copy.data.entryId && (Array.isArray(copy.data.transcripts) || Array.isArray(copy.data.captionAssets))) {
+        copy.data = aggregateEntry(copy.data, inheritedRequestedLanguages);
+      }
+    }
+
+    if (Array.isArray(copy.entries)) {
+      copy.entries = copy.entries.map(entry => aggregateEntry(entry, inheritedRequestedLanguages));
+    }
+
+    return copy;
+  }
+
+  // Expose utilities for UAT and console diagnostics.
+  window.MetadataExtractionFactoryCaptionMapping = Object.freeze({
+    version: "1.0.0",
+    normalizeCaptionStatus,
+    normalizeCaptionFormat,
+    normalizeLanguageCode,
+    normalizeTranscript,
+    aggregateEntry,
+    normalizePayload
+  });
+
+  // Install before existing application scripts execute.
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return response;
+    }
+
+    try {
+      const payload = await response.clone().json();
+      const normalized = normalizePayload(payload);
+      const headers = new Headers(response.headers);
+      headers.set("content-type", "application/json; charset=utf-8");
+      headers.set("x-metadata-extraction-factory-normalized", "1");
+
+      return new Response(JSON.stringify(normalized), {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+      });
+    }
+    catch (error) {
+      console.error("Metadata Extraction Factory caption normalization failed", error);
+      return response;
+    }
+  };
+
+  console.info("Metadata Extraction Factory caption mapping v1 loaded", {
+    statusMapping: CAPTION_STATUS_BY_CODE,
+    formatMapping: CAPTION_FORMAT_BY_CODE
+  });
+})();
+</script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Metadata Extraction Factory</title><meta name="application-name" content="Metadata Extraction Factory"><meta name="robots" content="noindex,nofollow">
 <style>
 :root{--navy:#17365d;--blue:#1769aa;--teal:#0f6b78;--bg:#f4f6f8;--card:#fff;--text:#17202a;--muted:#667085;--line:#dce3ea;--ok:#18794e;--warn:#a15c00;--bad:#b42318;--purple:#7030a0}*{box-sizing:border-box}body{margin:0;background:var(--bg);font:14px Segoe UI,Arial,sans-serif;color:var(--text)}header{background:linear-gradient(120deg,var(--navy),#285d8f);color:white;padding:24px 28px}header h1{margin:0;font-size:28px}header p{margin:7px 0 0;color:#dceaff}nav{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);display:flex;gap:6px;padding:9px 20px;overflow:auto}nav button{border:0;background:transparent;padding:10px 13px;border-radius:8px;cursor:pointer;white-space:nowrap}nav button.active,nav button:hover{background:#e9f2fb;color:#075b9b}main{max-width:1600px;margin:auto;padding:22px}section{display:none}section.active{display:block}h2{color:var(--navy);margin:0 0 14px}h3{color:#315777}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 2px 7px #00000008}.kpi b{display:block;font-size:28px;margin-bottom:5px}.muted{color:var(--muted)}.notice{padding:12px 15px;background:#fff4dc;border-left:5px solid #e59b18;border-radius:8px;margin:12px 0}.ok{color:var(--ok)}.bad{color:var(--bad)}.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#e9f2fb;color:#075b9b;font-size:12px}.badge.ready{background:#e4f3ea;color:var(--ok)}.badge.wait{background:#fff1d6;color:var(--warn)}.badge.no{background:#fde9e7;color:var(--bad)}.toolbar{display:grid;grid-template-columns:2fr repeat(4,1fr);gap:8px;margin:12px 0}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;border:1px solid #cbd5df;border-radius:8px;padding:10px;background:#fff}button.primary{border:0;background:var(--blue);color:white;border-radius:8px;padding:10px 14px;cursor:pointer}button.secondary{border:1px solid #b8c6d3;background:white;border-radius:8px;padding:9px 12px;cursor:pointer}.tablewrap{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:65vh}
 table{width:100%;border-collapse:separate;border-spacing:0;min-width:980px}
@@ -44,7 +393,356 @@ tr:hover td.action-cell{background:#f7fbff}
 .real-empty{padding:30px;text-align:center;color:var(--muted)}
 .real-api-url{word-break:break-all}
 </style></head><body>
-<header><h1>Metadata Extraction Factory</h1><p>Catalogo multimediale, SRT multilingua, demo API, UAT ed error catalog</p></header>
+<header>
+<script id="metadata-extraction-factory-caption-mapping-v1">
+/* Metadata Extraction Factory - canonical caption normalization and aggregation */
+(() => {
+  "use strict";
+
+  const CAPTION_STATUS_BY_CODE = Object.freeze({
+    "-1": "ERROR",
+    "0": "QUEUED",
+    "2": "READY",
+    "3": "DELETED",
+    "7": "IMPORTING",
+    "9": "EXPORTING"
+  });
+
+  const CAPTION_CODE_BY_NAME = Object.freeze({
+    ERROR: -1,
+    QUEUED: 0,
+    READY: 2,
+    DELETED: 3,
+    IMPORTING: 7,
+    EXPORTING: 9
+  });
+
+  const CAPTION_FORMAT_BY_CODE = Object.freeze({
+    "1": "SRT",
+    "2": "DFXP_TTML",
+    "3": "WEBVTT",
+    "4": "CAP",
+    "5": "SCC"
+  });
+
+  const CAPTION_FORMAT_CODE_BY_NAME = Object.freeze({
+    SRT: 1,
+    DFXP: 2,
+    DFXP_TTML: 2,
+    TTML: 2,
+    WEBVTT: 3,
+    VTT: 3,
+    CAP: 4,
+    SCC: 5
+  });
+
+  const LANGUAGE_CODE_MAP = Object.freeze({
+    italian: "it",
+    italiano: "it",
+    it: "it",
+    english: "en",
+    inglese: "en",
+    en: "en",
+    french: "fr",
+    francese: "fr",
+    fr: "fr",
+    spanish: "es",
+    spagnolo: "es",
+    es: "es",
+    german: "de",
+    tedesco: "de",
+    de: "de",
+    portuguese: "pt",
+    portoghese: "pt",
+    pt: "pt"
+  });
+
+  function asNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function normalizeCaptionStatus(rawCode, rawName, rawReady) {
+    let statusCode = asNumber(rawCode);
+    let statusName = String(rawName ?? "").trim().toUpperCase();
+
+    // Some API/view models place the numeric code in status.
+    if (statusCode === null) {
+      const numericStatus = asNumber(rawName);
+      if (numericStatus !== null) statusCode = numericStatus;
+    }
+
+    if (statusCode !== null) {
+      statusName = CAPTION_STATUS_BY_CODE[String(statusCode)] ?? `UNKNOWN_${statusCode}`;
+    }
+    else if (Object.prototype.hasOwnProperty.call(CAPTION_CODE_BY_NAME, statusName)) {
+      statusCode = CAPTION_CODE_BY_NAME[statusName];
+    }
+    else if (!statusName) {
+      statusName = "UNKNOWN_NULL";
+    }
+    else if (!statusName.startsWith("UNKNOWN_")) {
+      statusName = `UNKNOWN_${statusName}`;
+    }
+
+    // Canonical rule: Kaltura code 2 is the only READY state.
+    // A textual READY is accepted when raw code is unavailable.
+    const ready = statusCode === 2 || (statusCode === null && String(rawName ?? "").trim().toUpperCase() === "READY") || rawReady === true && statusName === "READY";
+
+    return {
+      rawStatusCode: statusCode,
+      status: statusName,
+      ready
+    };
+  }
+
+  function normalizeCaptionFormat(rawCode, rawName) {
+    let formatCode = asNumber(rawCode);
+    let formatName = String(rawName ?? "").trim().toUpperCase();
+
+    if (formatCode === null) {
+      const numericFormat = asNumber(rawName);
+      if (numericFormat !== null) formatCode = numericFormat;
+    }
+
+    if (formatCode !== null) {
+      formatName = CAPTION_FORMAT_BY_CODE[String(formatCode)] ?? `UNKNOWN_${formatCode}`;
+    }
+    else if (Object.prototype.hasOwnProperty.call(CAPTION_FORMAT_CODE_BY_NAME, formatName)) {
+      formatCode = CAPTION_FORMAT_CODE_BY_NAME[formatName];
+      formatName = CAPTION_FORMAT_BY_CODE[String(formatCode)];
+    }
+    else if (!formatName) {
+      formatName = "UNKNOWN_NULL";
+    }
+    else if (!formatName.startsWith("UNKNOWN_")) {
+      formatName = `UNKNOWN_${formatName}`;
+    }
+
+    return {
+      formatCode,
+      format: formatName,
+      eligibleFormat: formatCode === 1 || formatName === "SRT"
+    };
+  }
+
+  function normalizeLanguageCode(rawLanguageCode, rawLanguageName, label) {
+    for (const candidate of [rawLanguageCode, rawLanguageName, label]) {
+      if (candidate === null || candidate === undefined) continue;
+      const key = String(candidate).trim().toLowerCase().replaceAll("-", "_");
+      if (LANGUAGE_CODE_MAP[key]) return LANGUAGE_CODE_MAP[key];
+      if (/^[a-z]{2}$/.test(key)) return key;
+      if (/^[a-z]{2}_[a-z]{2}$/.test(key)) return key.replace("_", "-");
+    }
+    return "und";
+  }
+
+  function normalizeTranscript(rawAsset) {
+    const asset = rawAsset && typeof rawAsset === "object" ? rawAsset : {};
+
+    const statusInfo = normalizeCaptionStatus(
+      asset.rawStatusCode ?? asset.statusCode,
+      asset.statusName ?? asset.status,
+      asset.ready
+    );
+
+    const formatInfo = normalizeCaptionFormat(
+      asset.formatCode,
+      asset.formatName ?? asset.format
+    );
+
+    const languageCode = normalizeLanguageCode(
+      asset.languageCode,
+      asset.languageName ?? asset.language,
+      asset.label
+    );
+
+    const extractable = statusInfo.ready === true && Boolean(asset.captionAssetId ?? asset.assetId ?? asset.id);
+    const eligibleAsset = statusInfo.ready === true && formatInfo.eligibleFormat === true && languageCode !== "und";
+    const exclusionReasons = [];
+
+    if (!statusInfo.ready) exclusionReasons.push(`CAPTION_STATUS_${statusInfo.status}`);
+    if (!formatInfo.eligibleFormat) exclusionReasons.push(`FORMAT_NOT_ELIGIBLE_${formatInfo.format}`);
+    if (languageCode === "und") exclusionReasons.push("LANGUAGE_NOT_RECOGNIZED");
+
+    return {
+      ...asset,
+      captionAssetId: asset.captionAssetId ?? asset.assetId ?? asset.id ?? null,
+      languageCode,
+      languageName: asset.languageName ?? asset.language ?? asset.label ?? "",
+      label: asset.label ?? "",
+      formatCode: formatInfo.formatCode,
+      format: formatInfo.format,
+      rawStatusCode: statusInfo.rawStatusCode,
+      status: statusInfo.status,
+      ready: statusInfo.ready,
+      extractable,
+      eligibleFormat: formatInfo.eligibleFormat,
+      eligibleAsset,
+      isDefault: asset.isDefault === true || Number(asset.isDefault) === 1,
+      accuracy: asset.accuracy ?? null,
+      version: asset.version ?? null,
+      updatedAt: asset.updatedAt ?? null,
+      exclusionReasons
+    };
+  }
+
+  function normalizeRequestedLanguages(value) {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.map(item => normalizeLanguageCode(item, item, item)).filter(item => item !== "und"))];
+  }
+
+  function aggregateEntry(entry, inheritedRequestedLanguages = []) {
+    if (!entry || typeof entry !== "object") return entry;
+
+    const rawTranscripts = Array.isArray(entry.transcripts)
+      ? entry.transcripts
+      : Array.isArray(entry.captionAssets)
+        ? entry.captionAssets
+        : [];
+
+    const transcripts = rawTranscripts.map(normalizeTranscript);
+    const requestedLanguages = normalizeRequestedLanguages(
+      entry.requestedLanguages ?? inheritedRequestedLanguages
+    );
+
+    const readyAssets = transcripts.filter(asset => asset.ready === true);
+    const readySrtAssets = readyAssets.filter(asset => asset.eligibleFormat === true);
+    const eligibleAssets = readySrtAssets.filter(asset => asset.eligibleAsset === true);
+    const availableLanguages = [...new Set(readySrtAssets.map(asset => asset.languageCode).filter(code => code && code !== "und"))];
+    const missingLanguages = requestedLanguages.filter(code => !availableLanguages.includes(code));
+
+    let status;
+    if (entry.entryAvailable === false) status = "ENTRY_NOT_FOUND";
+    else if (transcripts.length === 0) status = "ENTRY_FOUND_NO_CAPTIONS";
+    else if (readyAssets.length === 0) status = "ONLY_NON_READY_CAPTIONS";
+    else if (readySrtAssets.length === 0) status = "READY_CAPTIONS_NO_SRT";
+    else if (requestedLanguages.length > 0 && missingLanguages.length > 0) status = "PARTIAL_READY_FOR_INDEXING";
+    else status = "READY_FOR_INDEXING";
+
+    const technicallyEligible = eligibleAssets.length > 0;
+    const eligibilityReasons = [];
+    const exclusionReasons = [];
+
+    if (entry.entryAvailable !== false) eligibilityReasons.push("ENTRY_AVAILABLE");
+    if (readyAssets.length > 0) eligibilityReasons.push("READY_CAPTION_AVAILABLE");
+    if (readySrtAssets.length > 0) eligibilityReasons.push("READY_SRT_AVAILABLE");
+    if (availableLanguages.length > 0) eligibilityReasons.push("LANGUAGE_RECOGNIZED");
+
+    if (transcripts.length === 0) exclusionReasons.push("NO_CAPTION_ASSETS");
+    else if (readyAssets.length === 0) exclusionReasons.push("NO_READY_CAPTION_ASSETS");
+    else if (readySrtAssets.length === 0) exclusionReasons.push("NO_READY_SRT_ASSETS");
+
+    for (const language of missingLanguages) {
+      exclusionReasons.push(`MISSING_REQUIRED_LANGUAGE_${language.toUpperCase()}`);
+    }
+
+    // Current demo rule: at least one recognized READY SRT is technically eligible.
+    // If ENI later requires all requested languages, change this to:
+    // technicallyEligible && missingLanguages.length === 0
+    const eligibleForChatbot = technicallyEligible;
+
+    return {
+      ...entry,
+      status,
+      eligibleForChatbot,
+      technicallyEligible,
+      requestedLanguages,
+      availableLanguages,
+      missingLanguages,
+      captionSummary: {
+        totalCaptionAssets: transcripts.length,
+        readyCaptionAssets: readyAssets.length,
+        nonReadyCaptionAssets: transcripts.length - readyAssets.length,
+        readySrtAssets: readySrtAssets.length,
+        eligibleCaptionAssets: eligibleAssets.length,
+        readyLanguageCount: availableLanguages.length
+      },
+      transcripts,
+      eligibilityReasons,
+      exclusionReasons
+    };
+  }
+
+  function normalizePayload(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+
+    const copy = Array.isArray(payload) ? [...payload] : { ...payload };
+    const inheritedRequestedLanguages = copy.requestedLanguages ?? copy.data?.requestedLanguages ?? [];
+
+    if (copy.status === "VERIFY_RESULT" && copy.data && typeof copy.data === "object") {
+      copy.data = aggregateEntry(copy.data, inheritedRequestedLanguages);
+      return copy;
+    }
+
+    if (copy.data && typeof copy.data === "object") {
+      copy.data = { ...copy.data };
+
+      for (const key of ["entries", "items", "objects", "results"]) {
+        if (Array.isArray(copy.data[key])) {
+          copy.data[key] = copy.data[key].map(entry => aggregateEntry(entry, inheritedRequestedLanguages));
+        }
+      }
+
+      if (copy.data.entryId && (Array.isArray(copy.data.transcripts) || Array.isArray(copy.data.captionAssets))) {
+        copy.data = aggregateEntry(copy.data, inheritedRequestedLanguages);
+      }
+    }
+
+    if (Array.isArray(copy.entries)) {
+      copy.entries = copy.entries.map(entry => aggregateEntry(entry, inheritedRequestedLanguages));
+    }
+
+    return copy;
+  }
+
+  // Expose utilities for UAT and console diagnostics.
+  window.MetadataExtractionFactoryCaptionMapping = Object.freeze({
+    version: "1.0.0",
+    normalizeCaptionStatus,
+    normalizeCaptionFormat,
+    normalizeLanguageCode,
+    normalizeTranscript,
+    aggregateEntry,
+    normalizePayload
+  });
+
+  // Install before existing application scripts execute.
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return response;
+    }
+
+    try {
+      const payload = await response.clone().json();
+      const normalized = normalizePayload(payload);
+      const headers = new Headers(response.headers);
+      headers.set("content-type", "application/json; charset=utf-8");
+      headers.set("x-metadata-extraction-factory-normalized", "1");
+
+      return new Response(JSON.stringify(normalized), {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+      });
+    }
+    catch (error) {
+      console.error("Metadata Extraction Factory caption normalization failed", error);
+      return response;
+    }
+  };
+
+  console.info("Metadata Extraction Factory caption mapping v1 loaded", {
+    statusMapping: CAPTION_STATUS_BY_CODE,
+    formatMapping: CAPTION_FORMAT_BY_CODE
+  });
+})();
+</script><h1>Metadata Extraction Factory</h1><p>Catalogo multimediale, SRT multilingua, demo API, UAT ed error catalog</p></header>
 <nav id="nav"></nav><main>
 <section id="overview" class="active"><h2>Overview</h2><div class="notice"><b>Demo tecnica:</b> i dettagli testuali e gli asset mostrati sono sintetici. I KPI di copertura riflettono la baseline già osservata. I dati reali verranno importati dagli output catalogo.</div><div class="grid" id="kpis"></div><div class="grid" style="margin-top:14px"><div class="card"><h3>Regola di eleggibilità</h3><p><code>eligibleForChatbot = true</code> quando esiste almeno un asset SRT in stato READY.</p></div><div class="card"><h3>Copertura richiesta</h3><p>Intero catalogo READY e vista dedicata al canale Yellow.</p></div><div class="card"><h3>Output Extract</h3><p>SRT originale e testo clean per ogni traduzione selezionata.</p></div></div><h3 style="margin-top:20px">Lingue presenti nel dataset demo</h3><div class="grid" id="languageCards"></div></section>
 <section id="catalog"><h2>Catalogo entry</h2><div class="catalog-summary"><span id="catalogCount" class="catalog-count"></span><button class="secondary" id="resetCatalog">Reset filtri</button></div><div class="toolbar"><input id="q" placeholder="Cerca Entry ID o titolo"><select id="channelFilter"><option value="">Tutti i canali</option><option>Yellow</option></select><select id="langFilter"><option value="">Tutte le lingue</option></select><select id="eligFilter"><option value="">Tutte</option><option value="true">Eleggibili</option><option value="false">Non eleggibili</option></select><select id="versionFilter"><option value="">Tutte le versioni</option><option value="multi">Versioni multiple</option></select></div><div class="tablewrap"><table><thead><tr><th>Entry ID</th><th>Titolo</th><th>Tipo</th><th>Canale</th><th>SRT</th><th>Lingue</th><th>Versioni</th><th>Eleggibile</th><th class="action-head">Azioni</th></tr></thead><tbody id="catalogRows"></tbody></table></div></section>
