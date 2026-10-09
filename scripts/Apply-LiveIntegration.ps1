@@ -223,7 +223,7 @@ function renderRealRows() {
 
 async function liveVerify(entryId) {
   try {
-    const response = await liveFetch("/api/v1/transcripts/verify", {
+    const response = await liveFetch("/api/v1/kaltura/transcripts/verify", {
       method: "POST",
       body: JSON.stringify({ entryId })
     });
