@@ -10,6 +10,8 @@ export function createRestHandler({ service, env }) {
     const requestId=String(req.headers['x-request-id']||crypto.randomUUID());
     try {
       if(req.method==='GET'&&url.pathname==='/api/v1/health'){send(res,200,envelope('UP',{service:'metadata-extraction-factory',version:env.factoryVersion,environment:env.environmentName,mcpEnabled:env.mcpEnabled},[],[],requestId));return true;}
+      if(req.method==='GET'&&url.pathname==='/api/v1/test-scope'){send(res,200,envelope('TEST_SCOPE_READY',await service.getTestScope(),[],[],requestId));return true;}
+      if(req.method==='GET'&&url.pathname==='/api/v1/test-scope/entries'){send(res,200,envelope('TEST_SCOPE_ENTRIES',await service.listTestScopeEntries(),[],[],requestId));return true;}
       if(req.method==='POST'&&url.pathname==='/api/v1/kaltura/transcripts/verify'){const body=await readJson(req);send(res,200,envelope('VERIFY_RESULT',await service.verifyEntry(body),[],[],requestId));return true;}
       if(req.method==='POST'&&url.pathname==='/api/v1/kaltura/transcripts/extract'){const body=await readJson(req);send(res,200,envelope('SRT_AVAILABLE',await service.extractTranscript(body),[],[],requestId));return true;}
       if(req.method==='POST'&&url.pathname==='/api/v1/kaltura/transcripts/extract-preferred'){const body=await readJson(req);send(res,200,envelope('SRT_AVAILABLE',await service.extractPreferredTranscript(body),[],[],requestId));return true;}

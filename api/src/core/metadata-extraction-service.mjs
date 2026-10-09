@@ -4,10 +4,109 @@ import { parseSrt } from './srt-parser.mjs';
 import { sha256 } from './content-hasher.mjs';
 
 export class MetadataExtractionService {
-  constructor({ entryRepository, captionRepository, maxSegments=5000 }) { this.entryRepository=entryRepository; this.captionRepository=captionRepository; this.maxSegments=maxSegments; }
-  async verifyEntry(request) {
+  constructor({ entryRepository, captionRepository, categoryRepository, testCategoryName, maxSegments=5000 }) { this.entryRepository=entryRepository; this.captionRepository=captionRepository; this.categoryRepository=categoryRepository; this.testCategoryName=testCategoryName; this.maxSegments=maxSegments; this.testCategory=null; }
+  // TEST-SCOPE-METHODS
+  async getTestCategory() {
+    if (this.testCategory) return this.testCategory;
+
+    const category = await this.categoryRepository.findByName(
+      this.testCategoryName
+    );
+
+    if (!category) {
+      throw new ApplicationError(
+        "CATEGORY_NOT_FOUND",
+        `Category ${this.testCategoryName} not found`,
+        404
+      );
+    }
+
+    this.testCategory = category;
+    return category;
+  }
+
+  async getTestScope() {
+    const category = await this.getTestCategory();
+
+    const entryIds =
+      await this.categoryRepository.listEntryIds(
+        category.id
+      );
+
+    return {
+      environment: "PROD_142",
+      mode: "READ_ONLY",
+      category: {
+        id: category.id,
+        name: category.name,
+        fullName: category.fullName || category.name,
+        privacy: category.privacy,
+        status: category.status,
+        entryCount: entryIds.length
+      }
+    };
+  }
+
+  async assertEntryInTestScope(entryId) {
+    const category = await this.getTestCategory();
+
+    const allowed =
+      await this.categoryRepository.containsEntry(
+        category.id,
+        entryId
+      );
+
+    if (!allowed) {
+      throw new ApplicationError(
+        "ENTRY_OUTSIDE_TEST_SCOPE",
+        `Entry does not belong to ${this.testCategoryName}`,
+        403,
+        {
+          entryId,
+          categoryId: category.id,
+          categoryName: category.name
+        }
+      );
+    }
+
+    return category;
+  }
+
+  async listTestScopeEntries() {
+    const category = await this.getTestCategory();
+
+    const entryIds =
+      await this.categoryRepository.listEntryIds(
+        category.id
+      );
+
+    const entries = [];
+
+    for (const entryId of entryIds) {
+      entries.push(
+        await this.verifyEntry(
+          { entryId },
+          { skipScope: true }
+        )
+      );
+    }
+
+    return {
+      category: {
+        id: category.id,
+        name: category.name
+      },
+      total: entries.length,
+      entries
+    };
+  }
+
+  async verifyEntry(request, options={}) {
     const entryId=String(request.entryId || '').trim();
     if (!entryId) throw new ApplicationError('VALIDATION_ERROR','entryId is required',400);
+    if (!options.skipScope) {
+      await this.assertEntryInTestScope(entryId);
+    }
     let entry;
     try { entry=await this.entryRepository.get(entryId); } catch(error) { if (['ENTRY_ID_NOT_FOUND','INVALID_ENTRY_ID'].includes(error.code)) return this.buildVerify(null, [], request); throw error; }
     const list=await this.captionRepository.list(entryId);

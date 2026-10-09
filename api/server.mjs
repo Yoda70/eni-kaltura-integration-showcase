@@ -3,6 +3,7 @@ import { loadEnvironment, validateKalturaEnvironment } from './src/config/enviro
 import { KalturaClient } from './src/kaltura/kaltura-client.mjs';
 import { KalturaSessionProvider } from './src/kaltura/kaltura-session-provider.mjs';
 import { KalturaEntryRepository } from './src/kaltura/kaltura-entry-repository.mjs';
+import { KalturaCategoryRepository } from './src/kaltura/kaltura-category-repository.mjs';
 import { KalturaCaptionRepository } from './src/kaltura/kaltura-caption-repository.mjs';
 import { MetadataExtractionService } from './src/core/metadata-extraction-service.mjs';
 import { createRestHandler } from './src/rest/rest-router.mjs';
@@ -11,7 +12,29 @@ import { createMcpHandler } from './src/mcp/mcp-server.mjs';
 const env=loadEnvironment();
 const client=new KalturaClient({serviceUrl:env.serviceUrl});
 const sessionProvider=new KalturaSessionProvider({client,partnerId:env.partnerId,adminSecret:env.adminSecret,expirySeconds:env.sessionExpirySeconds});
-const service=new MetadataExtractionService({entryRepository:new KalturaEntryRepository({client,sessionProvider}),captionRepository:new KalturaCaptionRepository({client,sessionProvider,maxSrtBytes:env.maxSrtBytes}),maxSegments:env.maxSegments});
+const entryRepository = new KalturaEntryRepository({
+  client,
+  sessionProvider
+});
+
+const captionRepository = new KalturaCaptionRepository({
+  client,
+  sessionProvider,
+  maxSrtBytes: env.maxSrtBytes
+});
+
+const categoryRepository = new KalturaCategoryRepository({
+  client,
+  sessionProvider
+});
+
+const service = new MetadataExtractionService({
+  entryRepository,
+  captionRepository,
+  categoryRepository,
+  testCategoryName: env.testCategoryName,
+  maxSegments: env.maxSegments
+});
 const rest=createRestHandler({service,env});
 const mcp=createMcpHandler({service,env});
 
