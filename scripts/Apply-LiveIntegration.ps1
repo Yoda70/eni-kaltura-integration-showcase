@@ -191,60 +191,356 @@ async function loadRealScope() {
   }
 }
 
+function realDomId(entryId) {
+  return "real-" + String(entryId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function ensureRealExtractPanel() {
+  if ($("realExtractPanel")) return;
+
+  const tableWrapper = $("realRows").closest(".tablewrap");
+
+  if (!tableWrapper) return;
+
+  tableWrapper.insertAdjacentHTML("afterend", `
+    <div id="realExtractPanel" class="card" style="margin-top:14px;display:none">
+      <h3 style="margin-top:0">Extract Preferred</h3>
+      <p id="realExtractStatus" class="muted">
+        Nessuna estrazione eseguita.
+      </p>
+      <div id="realExtractSummary" class="grid"></div>
+    </div>
+  `);
+}
+
+function setRealActionBusy(entryId, busy, label) {
+  const safeId = realDomId(entryId);
+  const verifyButton = $("verify-" + safeId);
+  const extractButton = $("extract-" + safeId);
+  const languageSelect = $("language-" + safeId);
+
+  if (verifyButton) {
+    verifyButton.disabled = busy;
+    verifyButton.textContent = busy ? "Attendere..." : "Verify live";
+  }
+
+  if (extractButton) {
+    const available = extractButton.dataset.available === "true";
+
+    extractButton.disabled = busy || !available;
+    extractButton.textContent = label || "Extract Preferred";
+  }
+
+  if (languageSelect) {
+    languageSelect.disabled =
+      busy || languageSelect.options.length === 0;
+  }
+}
+
+function showRealExtractResult(response) {
+  ensureRealExtractPanel();
+
+  const panel = $("realExtractPanel");
+  const status = $("realExtractStatus");
+  const summary = $("realExtractSummary");
+  const data = response?.data || {};
+
+  panel.style.display = "block";
+  status.textContent = "Estrazione completata.";
+
+  const values = [
+    ["Entry ID", data.entryId || "-"],
+    ["Caption Asset ID", data.captionAssetId || "-"],
+    ["Lingua", data.languageCode || "-"],
+    ["Formato", data.format || "-"],
+    ["Dimensione byte", data.artifact?.sizeBytes ?? "-"],
+    ["Segmenti", data.segments?.count ?? "-"],
+    ["SHA-256", data.artifact?.sha256 || "-"]
+  ];
+
+  summary.innerHTML = values.map(item => `
+    <div class="card kpi">
+      <b style="font-size:16px;word-break:break-all">
+        ${esc(item[1])}
+      </b>
+      <span class="muted">${esc(item[0])}</span>
+    </div>
+  `).join("");
+}
+
+function showRealExtractError(entryId, error) {
+  ensureRealExtractPanel();
+
+  const panel = $("realExtractPanel");
+  const status = $("realExtractStatus");
+  const summary = $("realExtractSummary");
+
+  panel.style.display = "block";
+  status.textContent = "Estrazione non completata.";
+
+  summary.innerHTML = `
+    <div class="notice" style="grid-column:1/-1">
+      <b>Extract Preferred non riuscito.</b><br>
+      Entry: <code>${esc(entryId)}</code><br>
+      ${esc(error.message || "Errore sconosciuto")}
+    </div>
+  `;
+}
+
 function renderRealRows() {
-  const assetCount = REAL_ENTRIES.reduce((total, entry) => total + (entry.transcripts || []).length, 0);
-  const languageCount = new Set(REAL_ENTRIES.flatMap(entry => entry.availableLanguages || [])).size;
-  const eligibleCount = REAL_ENTRIES.filter(entry => entry.eligibleForChatbot).length;
+  ensureRealExtractPanel();
+
+  const assetCount = REAL_ENTRIES.reduce(
+    (total, entry) =>
+      total + (entry.transcripts || []).length,
+    0
+  );
+
+  const languageCount = new Set(
+    REAL_ENTRIES.flatMap(
+      entry => entry.availableLanguages || []
+    )
+  ).size;
+
+  const eligibleCount = REAL_ENTRIES.filter(
+    entry => entry.eligibleForChatbot
+  ).length;
 
   $("realScopeKpis").innerHTML = [
     ["Entry reali", REAL_ENTRIES.length],
     ["Asset caption", assetCount],
     ["Lingue READY", languageCount],
     ["Eleggibili", eligibleCount]
-  ].map(item => `<div class="card kpi"><b>${item[1]}</b><span class="muted">${item[0]}</span></div>`).join("");
+  ].map(item => `
+    <div class="card kpi">
+      <b>${item[1]}</b>
+      <span class="muted">${item[0]}</span>
+    </div>
+  `).join("");
 
   $("realRows").innerHTML = REAL_ENTRIES.map(entry => {
-    const languages = (entry.availableLanguages || [])
-      .map(languageCode => `<span class="language-badge">${esc(languageCode)}</span>`)
+    const safeId = realDomId(entry.entryId);
+    const availableLanguages = entry.availableLanguages || [];
+
+    const canExtract =
+      entry.eligibleForChatbot === true &&
+      availableLanguages.length > 0;
+
+    const languages = availableLanguages
+      .map(languageCode => `
+        <span class="language-badge">
+          ${esc(languageCode)}
+        </span>
+      `)
       .join("") || "-";
 
-    return `<tr>
-      <td class="entry-cell">${esc(entry.entryId)}</td>
-      <td class="wrap">${esc(entry.title || "")}</td>
-      <td>${esc(entry.mediaType || "-")}</td>
-      <td><span class="badge ${entry.status === "READY_FOR_INDEXING" ? "ready" : "wait"}">${esc(entry.status)}</span></td>
-      <td><div class="language-list">${languages}</div></td>
-      <td>${(entry.transcripts || []).length}</td>
-      <td>${entry.eligibleForChatbot ? "Sì" : "No"}</td>
-      <td class="action-cell"><button class="secondary" onclick="liveVerify('${entry.entryId}')">Verify live</button></td>
-    </tr>`;
-  }).join("") || '<tr><td colspan="8" class="real-empty">Nessuna entry nella categoria.</td></tr>';
+    const options = availableLanguages
+      .map(languageCode => `
+        <option value="${esc(languageCode)}">
+          ${esc(languageCode.toUpperCase())}
+        </option>
+      `)
+      .join("");
+
+    const disabledAttribute =
+      canExtract ? "" : " disabled";
+
+    const unavailableReason = canExtract
+      ? ""
+      : `
+        <span class="muted" style="font-size:11px">
+          Nessun SRT READY estraibile
+        </span>
+      `;
+
+    return `
+      <tr>
+        <td class="entry-cell">${esc(entry.entryId)}</td>
+        <td class="wrap">${esc(entry.title || "")}</td>
+        <td>${esc(entry.mediaType || "-")}</td>
+
+        <td>
+          <span class="badge ${
+            entry.status === "READY_FOR_INDEXING"
+              ? "ready"
+              : "wait"
+          }">
+            ${esc(entry.status)}
+          </span>
+        </td>
+
+        <td>
+          <div class="language-list">
+            ${languages}
+          </div>
+        </td>
+
+        <td>${(entry.transcripts || []).length}</td>
+
+        <td>
+          ${entry.eligibleForChatbot ? "S&igrave;" : "No"}
+        </td>
+
+        <td class="action-cell">
+          <div style="display:grid;gap:6px;min-width:180px">
+            <select
+              id="language-${safeId}"
+              ${disabledAttribute}
+              aria-label="Lingua per ${esc(entry.entryId)}">
+              ${options}
+            </select>
+
+            <button
+              id="verify-${safeId}"
+              class="secondary"
+              onclick="liveVerify('${entry.entryId}')">
+              Verify live
+            </button>
+
+            <button
+              id="extract-${safeId}"
+              class="primary"
+              data-available="${canExtract ? "true" : "false"}"
+              ${disabledAttribute}
+              onclick="liveExtractPreferred('${entry.entryId}')">
+              Extract Preferred
+            </button>
+
+            ${unavailableReason}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("") || `
+    <tr>
+      <td colspan="8" class="real-empty">
+        Nessuna entry nella categoria.
+      </td>
+    </tr>
+  `;
 }
 
 async function liveVerify(entryId) {
+  setRealActionBusy(entryId, true);
+
   try {
-    const response = await liveFetch("/api/v1/kaltura/transcripts/verify", {
-      method: "POST",
-      body: JSON.stringify({ entryId })
-    });
-    $("realResponse").textContent = JSON.stringify(response, null, 2);
-  } catch (error) {
+    const response = await liveFetch(
+      "/api/v1/kaltura/transcripts/verify",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          entryId
+        })
+      }
+    );
+
+    $("realResponse").textContent =
+      JSON.stringify(response, null, 2);
+  }
+  catch (error) {
     $("realResponse").textContent = JSON.stringify({
       status: "VERIFY_ERROR",
       entryId,
       message: error.message
     }, null, 2);
   }
+  finally {
+    setRealActionBusy(entryId, false);
+  }
+}
+
+async function liveExtractPreferred(entryId) {
+  const safeId = realDomId(entryId);
+  const languageSelect = $("language-" + safeId);
+  const languageCode = languageSelect?.value || "";
+
+  if (!languageCode) {
+    const error = new Error(
+      "Nessuna lingua READY disponibile per l'estrazione."
+    );
+
+    showRealExtractError(entryId, error);
+
+    $("realResponse").textContent = JSON.stringify({
+      status: "EXTRACT_ERROR",
+      entryId,
+      message: error.message
+    }, null, 2);
+
+    return;
+  }
+
+  ensureRealExtractPanel();
+
+  $("realExtractPanel").style.display = "block";
+
+  $("realExtractStatus").textContent =
+    `Estrazione in corso per ${entryId} ` +
+    `in lingua ${languageCode}...`;
+
+  $("realExtractSummary").innerHTML = "";
+
+  setRealActionBusy(
+    entryId,
+    true,
+    "Estrazione..."
+  );
+
+  try {
+    const response = await liveFetch(
+      "/api/v1/kaltura/transcripts/extract-preferred",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          entryId,
+          languageCode,
+          outputMode: "metadata"
+        })
+      }
+    );
+
+    showRealExtractResult(response);
+
+    $("realResponse").textContent =
+      JSON.stringify(response, null, 2);
+  }
+  catch (error) {
+    showRealExtractError(entryId, error);
+
+    $("realResponse").textContent = JSON.stringify({
+      status: "EXTRACT_ERROR",
+      entryId,
+      languageCode,
+      message: error.message
+    }, null, 2);
+  }
+  finally {
+    setRealActionBusy(entryId, false);
+  }
 }
 
 function clearRealScope() {
   REAL_ENTRIES = [];
-  $("realRows").innerHTML = '<tr><td colspan="8" class="real-empty">Risultati rimossi.</td></tr>';
+
+  $("realRows").innerHTML =
+    '<tr><td colspan="8" class="real-empty">' +
+    'Risultati rimossi.</td></tr>';
+
   $("realScopeKpis").innerHTML = "";
   $("realResponse").textContent = "{}";
-  $("realScopeStatus").textContent = "Backend non ancora interrogato.";
-}
 
+  $("realScopeStatus").textContent =
+    "Backend non ancora interrogato.";
+
+  if ($("realExtractPanel")) {
+    $("realExtractPanel").style.display = "none";
+
+    $("realExtractStatus").textContent =
+      "Nessuna estrazione eseguita.";
+
+    $("realExtractSummary").innerHTML = "";
+  }
+}
 function resetCatalogFilters() {
   $("q").value = "";
   $("channelFilter").value = "";
