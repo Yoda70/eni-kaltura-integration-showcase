@@ -56,6 +56,30 @@ tr:hover td.action-cell{background:#f7fbff}
 .real-empty{padding:30px;text-align:center;color:var(--muted)}
 .real-api-url{word-break:break-all}
 @media(max-width:600px){.catalog-summary{align-items:flex-start;flex-direction:column}.catalog-actions{flex-direction:column;align-items:stretch}}
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+button.primary:disabled {
+  background: #94a3b8;
+  color: #f8fafc;
+  border-color: #94a3b8;
+  box-shadow: none;
+}
+
+button.secondary:disabled {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #cbd5e1;
+  box-shadow: none;
+}
+
+select:disabled {
+  background: #f1f5f9;
+  color: #64748b;
+}
 '@
 
     $Html = $Html.Replace('</style>', "$AdditionalCss</style>")
